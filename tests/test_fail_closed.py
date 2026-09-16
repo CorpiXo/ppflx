@@ -14,7 +14,7 @@ import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 
 import ppflx.core.zkp_gnark as zkp_gnark
-from tests.lib.conftest import break_gnark, requires_gnark, use_gnark
+from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 DEAD = "http://127.0.0.1:1"
 
