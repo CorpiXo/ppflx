@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# Key material is generated locally and never committed. The pinned verifying
+# keys and manifest in ppflx/core/gnark_keys_data/ are the exception.
+keys/
+ppflx/keys/prebuilt/*.bin
+ppflx/keys/prebuilt/*.zip

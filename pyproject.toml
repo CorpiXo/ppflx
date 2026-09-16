@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ppflx"
+version = "1.0.0"
+description = "Privacy-preserving federated learning on Flower: homomorphic encryption, zero-knowledge proofs of bounded updates, and differential privacy"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+dependencies = [
+    "flwr==1.36.0",
+    "torch==2.3.1",
+    "numpy==1.26.4",
+    "scikit-learn>=1.5",
+    "tenseal==0.3.18",
+    "psutil",
+    "requests",
+]
+
+[project.optional-dependencies]
+# Concrete-ML is BSD-3-Clause-Clear and grants no patent rights; Zama requires a
+# commercial patent licence for commercial use. See NOTICE.
+tfhe = ["concrete-ml==1.9.0"]
+# On-chain audit ledger instead of the local JSON ledger.
+web3 = ["web3", "eth-account"]
+
+[project.urls]
+Homepage = "https://github.com/CorpiXo/ppflx"
+"Proof service" = "https://github.com/CorpiXo/gnark-gradient-prover"
+Benchmarks = "https://github.com/CorpiXo/ppflx-bench"
+
+[tool.setuptools.packages.find]
+include = ["ppflx*"]
+
+[tool.setuptools.package-data]
+"ppflx.core" = ["gnark_keys_data/*"]
