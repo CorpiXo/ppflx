@@ -1,6 +1,6 @@
 """Round trips against real, separate gnark prover and verifier processes.
 
-Skipped when zkp_gnark_service/gnark_service has not been built. The session
+Skipped unless FL_GNARK_BINARY points at a built gnark_service. The session
 uses small pinned test keys (tests/conftest.py), never the committed ones.
 """
 

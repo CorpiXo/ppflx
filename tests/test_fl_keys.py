@@ -1,10 +1,10 @@
-"""Test ppflx.keys package — run with: conda run -n flEnv python3 tests/test_fl_keys.py"""
+"""Test ppflx.keys package — run with: python tests/test_fl_keys.py"""
 
 import sys, os, io, tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
-# Always run relative to the fl_ppml project root
+# Always run relative to the repository root
 def _repo_root() -> Path:
     """The checkout root, found by marker so the tests work at any depth."""
     for parent in Path(__file__).resolve().parents:

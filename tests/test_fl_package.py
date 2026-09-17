@@ -3,7 +3,7 @@ Smoke tests for the fl package.
 
 Run with::
 
-    cd fl_ppml
+    cd ppflx
     pip install -e .
     pytest tests/
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 import os
 
-# Ensure fl_ppml/ is importable
+# Ensure the repository root is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
