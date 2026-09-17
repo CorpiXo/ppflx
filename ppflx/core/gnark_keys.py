@@ -1,17 +1,24 @@
 """
 Pinned Groth16 key manifest (docs/ZKP.md, section 7).
 
-`gnark_service setup` writes `manifest.json` and the verifying keys into a
-committed directory, and the proving keys into a local cache. Python never
-reads key material: it reads the manifest so the server can pin which
-verifying key each proof must be checked under, and so both sides agree on
-each circuit's fixed size.
+`gnark_service setup` (gnark-gradient-prover) writes `manifest.json` and the
+verifying keys into a keys directory, and the proving keys into a proving-key
+directory. Python never reads key material: it reads the manifest so the
+server can pin which verifying key each proof must be checked under, and so
+both sides agree on each circuit's fixed size.
+
+The pinned keys packaged with this library have no proving keys outside the
+machine that made them. To prove, make a local key set outside every
+repository and point both variables at it:
+
+    gnark_service setup --keys-dir ~/.cache/ppflx/keys --pk-dir ~/.cache/ppflx/pk
+    export FL_ZKP_KEYS_DIR=~/.cache/ppflx/keys FL_ZKP_PK_DIR=~/.cache/ppflx/pk
 
 Environment:
-    FL_ZKP_KEYS_DIR  manifest and verifying keys (default: keys packaged with
-                     this library, else zkp_gnark_service/keys beside it)
-    FL_ZKP_PK_DIR    proving-key cache for the prover role
-                     (default: ~/.cache/fl_ppml/gnark_pk)
+    FL_ZKP_KEYS_DIR  manifest and verifying keys (default: the pinned keys
+                     packaged with this library)
+    FL_ZKP_PK_DIR    proving keys for the prover role
+                     (default: ~/.cache/ppflx/pk)
 """
 
 from __future__ import annotations
@@ -27,31 +34,29 @@ ELGAMAL_CIRCUIT = "elgamal"
 
 KEYS_DIR_ENV = "FL_ZKP_KEYS_DIR"
 PK_DIR_ENV = "FL_ZKP_PK_DIR"
-_REPO = Path(__file__).resolve().parents[2]
-# Where the pinned manifest and verifying keys are looked up, in order: the
-# environment, keys shipped with this package, then the proof service checked
-# out beside it. Packaged keys are the trust anchor once the service lives in
-# its own repository; the service itself is pointed at its keys with --keys-dir.
+# The manifest and verifying keys come from the environment, else the pinned
+# keys shipped with this package, which are the trust anchor for deployments.
+# The service itself is pointed at the same keys with --keys-dir.
 PACKAGED_KEYS_DIR = Path(__file__).resolve().parent / "gnark_keys_data"
-SERVICE_KEYS_DIR = _REPO / "zkp_gnark_service" / "keys"
-DEFAULT_PK_DIR = Path.home() / ".cache" / "fl_ppml" / "gnark_pk"
+DEFAULT_PK_DIR = Path.home() / ".cache" / "ppflx" / "pk"
+LOCAL_SETUP = (
+    "gnark_service setup --keys-dir ~/.cache/ppflx/keys --pk-dir ~/.cache/ppflx/pk, then "
+    f"export {KEYS_DIR_ENV}=~/.cache/ppflx/keys {PK_DIR_ENV}=~/.cache/ppflx/pk"
+)
 
 _cache: Dict[tuple, dict] = {}
 
 
 def keys_dir() -> Path:
-    """The pinned keys directory: the environment, else packaged keys, else the service's."""
+    """The pinned keys directory: FL_ZKP_KEYS_DIR, else the packaged keys."""
     from_env = os.environ.get(KEYS_DIR_ENV)
-    if from_env:
-        return Path(from_env)
-    for candidate in (PACKAGED_KEYS_DIR, SERVICE_KEYS_DIR):
-        if (candidate / "manifest.json").exists():
-            return candidate
-    return SERVICE_KEYS_DIR
+    return Path(from_env).expanduser() if from_env else PACKAGED_KEYS_DIR
 
 
 def pk_dir() -> Path:
-    return Path(os.environ.get(PK_DIR_ENV, str(DEFAULT_PK_DIR)))
+    """The proving-key directory: FL_ZKP_PK_DIR, else ~/.cache/ppflx/pk."""
+    from_env = os.environ.get(PK_DIR_ENV)
+    return Path(from_env).expanduser() if from_env else DEFAULT_PK_DIR
 
 
 def load_manifest() -> dict:
@@ -61,8 +66,8 @@ def load_manifest() -> dict:
         stat = path.stat()
     except FileNotFoundError as exc:
         raise FileNotFoundError(
-            f"No pinned ZKP key manifest at {path}. Point {KEYS_DIR_ENV} at the keys of the "
-            f"proof service, or run: gnark_service setup --keys-dir {keys_dir()} --pk-dir {pk_dir()}"
+            f"No ZKP key manifest at {path}. Point {KEYS_DIR_ENV} at the keys directory the proof "
+            f"service was started with. For a local key set outside the repositories: {LOCAL_SETUP}"
         ) from exc
     key = (str(path), stat.st_mtime_ns, stat.st_size)
     if key not in _cache:

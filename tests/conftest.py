@@ -10,19 +10,14 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-def _repo_root() -> Path:
-    """The checkout root, found by marker so the tests work at any depth."""
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "pyproject.toml").exists() or (parent / "ppflx").is_dir():
-            return parent
-    raise RuntimeError("could not locate the repository root")
-
-
-GNARK_BINARY = Path(os.environ.get("FL_GNARK_BINARY", _repo_root() / "zkp_gnark_service" / "gnark_service"))
+# The proof service lives in gnark-gradient-prover; point FL_GNARK_BINARY at a
+# built binary to run the tests that need it. Without it they skip.
+GNARK_BINARY = Path(os.environ["FL_GNARK_BINARY"]).expanduser() if os.environ.get("FL_GNARK_BINARY") else None
+GNARK_AVAILABLE = GNARK_BINARY is not None and GNARK_BINARY.exists()
 TEST_NORM_N, TEST_ELGAMAL_N = 8, 4
 
 requires_gnark = pytest.mark.skipif(
-    not GNARK_BINARY.exists(), reason="gnark_service binary not built"
+    not GNARK_AVAILABLE, reason="FL_GNARK_BINARY does not point at a built gnark_service binary"
 )
 
 
@@ -64,7 +59,7 @@ def start_gnark(role: str, keys_dir: Path, pk_dir: Path = None):
 @pytest.fixture(scope="session", autouse=True)
 def gnark_test_keys(tmp_path_factory):
     """Pin small test keys for the whole session, never the committed production keys."""
-    if not GNARK_BINARY.exists():
+    if not GNARK_AVAILABLE:
         yield None
         return
     root = tmp_path_factory.mktemp("gnark_keys")
@@ -86,7 +81,7 @@ def gnark_test_keys(tmp_path_factory):
 def gnark(gnark_test_keys):
     """Separate prover and verifier processes sharing the session's pinned test keys."""
     if gnark_test_keys is None:
-        pytest.skip("gnark_service binary not built")
+        pytest.skip("FL_GNARK_BINARY does not point at a built gnark_service binary")
     prover, prover_url = start_gnark("prover", gnark_test_keys.keys_dir, gnark_test_keys.pk_dir)
     verifier, verifier_url = start_gnark("verifier", gnark_test_keys.keys_dir)
     try:

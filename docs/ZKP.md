@@ -121,7 +121,7 @@ A model is proven in chunks, each with its own public bound. Clients declare eac
 
 Both circuits have a fixed size fixed by the pinned keys. Shorter inputs are padded with values that contribute nothing to the bound.
 
-### 5.1 Norm circuit (`zkp_gnark_service/main.go`, n = 256)
+### 5.1 Norm circuit (gnark-gradient-prover `main.go`, n = 256)
 
 Public inputs: `Bound`, `Hash`. Witness: `Weights[256]`.
 
@@ -138,7 +138,7 @@ Model-wide bound checked by the server: Σ declared bounds ≤ ⌈B·s + √n⌉
 
 Size: **103,365 constraints**.
 
-### 5.2 ElGamal update circuit (`zkp_gnark_service/elgamal.go`, n = 128)
+### 5.2 ElGamal update circuit (gnark-gradient-prover `elgamal.go`, n = 128)
 
 Public inputs: `PK`, `Bound`, `Context`, `Weight` (W), the client's ciphertexts `C1[128], C2[128]`, and the global model at the same slots `G1[128], G2[128]`.
 Witness: `Values[128]` (v = q + 2¹⁷), `Rand[128]`, `Agg[128]` (T), `SK`.
@@ -237,18 +237,32 @@ Nothing ties that hash to the ciphertext the server aggregates. A client can pro
 
 ### 7.1 Setup
 
+The proof service is [gnark-gradient-prover](https://github.com/CorpiXo/gnark-gradient-prover). Build it there and point `FL_GNARK_BINARY` at the binary:
+
 ```bash
-cd zkp_gnark_service && go build -o gnark_service . && cd ..
-zkp_gnark_service/gnark_service setup --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk [--norm-n 256] [--elgamal-n 128] [--force]
+cd gnark-gradient-prover && go build -o gnark_service .
+export FL_GNARK_BINARY=$PWD/gnark_service
 ```
 
-`setup` compiles both circuits, runs Groth16 setup once for each, and writes:
+`gnark_service setup --keys-dir DIR --pk-dir DIR [--norm-n 256] [--elgamal-n 128] [--force]` compiles both circuits, runs Groth16 setup once for each, and writes:
 
-- `keys/<circuit>-<n>.vk`: verifying keys, committed to the repository;
-- `keys/manifest.json`: for each circuit its size, constraint count, SHA-256 of the verifying and proving keys, the gnark version, the date and a statement of the setup model;
-- `<pk-dir>/<circuit>-<n>.pk`: proving keys (hundreds of MB), written with mode 0600 and not committed.
+- `<keys-dir>/<circuit>-<n>.vk`: verifying keys;
+- `<keys-dir>/manifest.json`: for each circuit its size, constraint count, SHA-256 of the verifying and proving keys, the gnark version, the date and a statement of the setup model;
+- `<pk-dir>/<circuit>-<n>.pk`: proving keys (hundreds of MB), written with mode 0600 and never committed.
 
-It refuses to overwrite existing keys without `--force`. Regenerating keys re-pins the verifying keys: proofs made under old keys no longer verify, and the new `keys/` directory must be committed.
+It refuses to replace an existing manifest or proving key without `--force`.
+
+**Local keys (benchmarks and development).** The pinned keys packaged with ppflx (`ppflx/core/gnark_keys_data/`, a copy of gnark-gradient-prover's `keys/`) come without their proving keys, so a new machine cannot prove under them. Make a local key set outside every repository and point both variables at it:
+
+```bash
+$FL_GNARK_BINARY setup --keys-dir ~/.cache/ppflx/keys --pk-dir ~/.cache/ppflx/pk
+export FL_ZKP_KEYS_DIR=~/.cache/ppflx/keys
+export FL_ZKP_PK_DIR=~/.cache/ppflx/pk
+```
+
+Nothing is committed. When one operator runs the prover, the verifier and the clients, a local setup is self-consistent; it has the same single-party trust status as the pinned keys ([7.3](#73-what-a-single-party-setup-does-and-does-not-give)). Proving and verification cost depend on the circuit and the witness, not on the setup randomness. Every round outcome records the manifest hash (`key_manifest_sha256`), so the keys a run used are traceable.
+
+**Pinned keys (deployments).** Without `FL_ZKP_KEYS_DIR`, ppflx checks proofs against the packaged pinned keys. Re-keying them is a deliberate change: it runs setup into gnark-gradient-prover's `keys/` with `--force` and updates the copy in ppflx in the same set of pull requests, since proofs made under the old keys no longer verify. It is never a way to get started.
 
 ### 7.2 Roles and pinning
 
@@ -277,12 +291,12 @@ A multi-party ceremony would change this: a universal Powers-of-Tau phase follow
 ### 8.1 Running it
 
 ```bash
-zkp_gnark_service/gnark_service serve --role prover   --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk --port 9000
-zkp_gnark_service/gnark_service serve --role verifier --keys-dir zkp_gnark_service/keys --port 9001
-zkp_gnark_service/gnark_service elgamal-keygen keys/he_elgamal/secret_key.json keys/he_elgamal/public_key.json
+$FL_GNARK_BINARY serve --role prover   --keys-dir "$FL_ZKP_KEYS_DIR" --pk-dir "$FL_ZKP_PK_DIR" --port 9000
+$FL_GNARK_BINARY serve --role verifier --keys-dir "$FL_ZKP_KEYS_DIR" --port 9001
+$FL_GNARK_BINARY elgamal-keygen keys/he_elgamal/secret_key.json keys/he_elgamal/public_key.json
 ```
 
-`compare.py` starts both roles automatically. `python -m ppflx.keys generate he_elgamal` wraps `elgamal-keygen`.
+ppflx-bench's `compare.py` starts both roles automatically from `FL_GNARK_BINARY`. `python -m ppflx.keys generate he_elgamal` wraps `elgamal-keygen` and needs `FL_GNARK_BINARY`.
 
 ### 8.2 Endpoints
 
@@ -429,8 +443,9 @@ Concurrent proving on shared cores is slower per proof than the single-proof fig
 | `FL_ZKP_LAYERS` | `ALL` | Tensors to prove. Anything but `ALL` fails the server's coverage check |
 | `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | Prover service |
 | `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | Verifier service |
-| `FL_ZKP_KEYS_DIR` | `zkp_gnark_service/keys` | Manifest and verifying keys |
-| `FL_ZKP_PK_DIR` | `~/.cache/fl_ppml/gnark_pk` | Proving keys (prover only) |
+| `FL_GNARK_BINARY` | none | Proof service binary (gnark-gradient-prover) |
+| `FL_ZKP_KEYS_DIR` | packaged pinned keys | Manifest and verifying keys |
+| `FL_ZKP_PK_DIR` | `~/.cache/ppflx/pk` | Proving keys (prover only) |
 | `FL_ZKP_TIMEOUT` | `600` | Fallback HTTP timeout, seconds |
 | `FL_ZKP_PROVE_TIMEOUT` | `1800` | Prove request timeout |
 | `FL_ZKP_VERIFY_TIMEOUT`, `FL_ZKP_VERIFY_LIGHT_TIMEOUT` | `900` | Verify request timeouts |
@@ -460,10 +475,10 @@ Concurrent proving on shared cores is slower per proof than the single-proof fig
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `No pinned ZKP key manifest` | Keys never generated | Run `gnark_service setup` ([7.1](#71-setup)) |
-| `Proving keys [...] not in ...` | Fresh checkout: proving keys are not committed | Run `setup --force` and commit the new `keys/` |
-| Service exits at start with a hash mismatch | Key files differ from the manifest | Restore the committed `keys/` or regenerate with `setup --force` |
-| HTTP 503 on verification, round `infrastructure_abort` | Verifier started from other keys | Restart the services from the committed `keys/` |
+| `No ZKP key manifest` | `FL_ZKP_KEYS_DIR` points at a directory without a setup | Run the local setup ([7.1](#71-setup)) or fix the variable |
+| `Proving keys [...] not in ...` | Proving keys are never committed; the packaged pinned keys have none on a new machine | Run the local setup into new directories and export `FL_ZKP_KEYS_DIR` and `FL_ZKP_PK_DIR` ([7.1](#71-setup)) |
+| Service exits at start with a hash mismatch | Key files differ from the manifest, e.g. proving keys from another setup | Point `--keys-dir` and `--pk-dir` at the directories of one setup, or run the local setup into new directories |
+| HTTP 503 on verification, round `infrastructure_abort` | Verifier started from other keys | Restart the services from the directory in `FL_ZKP_KEYS_DIR` (or the packaged keys if unset) |
 | `no calibrated ZKP update-norm bound for dataset` | Dataset missing from `PER_STEP_UPDATE_NORM` | Run `scripts/calibrate_update_norm.py` and add the value, or set `FL_ZKP_MAX_NORM` |
 | Many clients listed in `clipped` | Configuration takes fewer steps than calibrated, or DP noise | Recalibrate for the configuration, or set `FL_ZKP_MAX_NORM` |
 | `declared update bounds sum to ... above the server's bound` | The client did not clip (not the framework client), or client and server use different bounds | Clients must use the bound from the server's fit configuration |
