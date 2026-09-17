@@ -21,14 +21,20 @@ import re
 import subprocess
 from pathlib import Path
 
-# The proof service binary, which also generates ElGamal key pairs. Set
-# FL_GNARK_BINARY when the service is not checked out beside this package.
+# The proof service binary (gnark-gradient-prover), which also generates
+# ElGamal key pairs. It lives in its own repository, so there is no default.
 BINARY_ENV = "FL_GNARK_BINARY"
-_DEFAULT_BINARY = Path(__file__).resolve().parents[2] / "zkp_gnark_service" / "gnark_service"
 
 
 def gnark_binary() -> Path:
-    return Path(os.environ.get(BINARY_ENV, str(_DEFAULT_BINARY)))
+    from_env = os.environ.get(BINARY_ENV)
+    if not from_env:
+        raise FileNotFoundError(
+            f"{BINARY_ENV} is not set. Build the proof service from "
+            "github.com/CorpiXo/gnark-gradient-prover (go build -o gnark_service .) "
+            f"and set {BINARY_ENV} to the binary."
+        )
+    return Path(from_env).expanduser()
 
 _HEX_POINT = re.compile(r"^[0-9a-f]{64}$")
 
@@ -38,17 +44,18 @@ def generate(
     public_path: str = "keys/he_elgamal/public_key.json",
     overwrite: bool = False,
 ) -> None:
+    # Resolve the binary first, so a missing one never costs the existing keys.
+    binary = gnark_binary()
+    if not binary.exists():
+        raise FileNotFoundError(
+            f"{BINARY_ENV}={binary} does not exist. Build the proof service "
+            "(go build -o gnark_service . in gnark-gradient-prover) and point it there."
+        )
     for path in (secret_path, public_path):
         if os.path.exists(path):
             if not overwrite:
                 raise FileExistsError(f"{path} already exists. Pass overwrite=True to regenerate.")
             os.remove(path)
-    binary = gnark_binary()
-    if not binary.exists():
-        raise FileNotFoundError(
-            f"{binary} not built. Build the proof service (go build -o gnark_service .) "
-            f"or point {BINARY_ENV} at it."
-        )
     for path in (secret_path, public_path):
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
 
