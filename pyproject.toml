@@ -11,7 +11,7 @@ requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = [
     "flwr==1.36.0",
-    "torch==2.3.1",
+    "torch==2.13.0",
     "numpy==1.26.4",
     "scikit-learn>=1.5",
     "tenseal==0.3.18",
