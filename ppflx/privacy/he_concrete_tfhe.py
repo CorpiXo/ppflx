@@ -105,7 +105,7 @@ class HeConcreteThfeMode(PrivacyMode):
         return ctx
 
     def setup_server_context(self, config):
-        """Initialise server-side Concrete TFHE context (no private key)."""
+        """Initialise server-side Concrete TFHE context: it never loads the secret key."""
         from ppflx.core.security import get_concrete_aggregation_context
 
         auto_disabled = _auto_disable_real_tfhe_for_images(config, config.sim_mode)
@@ -120,6 +120,7 @@ class HeConcreteThfeMode(PrivacyMode):
             enable_fhe=not auto_disabled,
             adaptive_quant=adaptive_quant,
             num_clients=num_clients,
+            role="server",
         )
         mode_label = "real" if not auto_disabled else "simulated-safe"
         print(
