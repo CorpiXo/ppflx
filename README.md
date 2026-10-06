@@ -2,7 +2,7 @@
 
 Privacy-preserving federated learning on [Flower](https://flower.ai): each
 privacy mechanism is a plugin, so a run combines homomorphic encryption,
-zero-knowledge proofs of bounded model updates, and differential privacy
+zero-knowledge proofs of bounded model updates, and differential-privacy noise
 without the training code knowing which is in use.
 
 Proofs are produced and checked by
@@ -12,15 +12,22 @@ benchmarks across datasets and modes live in
 
 ## What the modes guarantee
 
-| Mode | Confidentiality | Integrity | Membership privacy |
+| Mode | Confidentiality | Integrity | DP |
 |---|---|---|---|
 | `baseline` | — | — | — |
 | `he_tenseal`, `he_concrete_tfhe` | server sees only ciphertexts | — | — |
 | `zkp` | — | update bound to the downloaded model, norm bounded | — |
 | `he_elgamal_zkp`, `he_elgamal_zkp_sampled` | additively homomorphic ciphertexts | **proof bound to the aggregated ciphertext** | — |
 | `he_*_zkp` (CKKS/TFHE composites) | server sees only ciphertexts | none — the proof is not bound to the ciphertext | — |
-| `dp` | — | — | (ε, δ)-DP on the published model |
-| `he_*_zkp_dp` | server sees only ciphertexts | none | (ε, δ)-DP |
+| `dp` | — | — | noise in training; no end-to-end (ε, δ) guarantee |
+| `he_*_zkp_dp` | server sees only ciphertexts | none | as `dp` |
+
+**DP as implemented.** During local training each batch's mean gradient is
+clipped to norm C and Gaussian noise with standard deviation σ·C/B is added (B is
+the batch size), with σ = √(2 ln(1.25/δ))/ε (`ppflx/core/engine.py`). That is a
+single-step calibration with no per-example clipping and no accounting across
+steps or rounds, so the recorded ε sets the noise; it is not an (ε, δ) guarantee
+for the published model.
 
 `docs/ZKP.md` documents the protocols, the update bound, the circuits and the
 limitations in full. Read [SECURITY.md](SECURITY.md) before relying on any of
@@ -28,9 +35,11 @@ these properties.
 
 ## Install
 
+ppflx is not on PyPI yet; install it from GitHub:
+
 ```bash
-pip install ppflx                 # core: Flower, TenSEAL, torch
-pip install "ppflx[tfhe]"         # adds Concrete-ML — see the licence note below
+pip install "ppflx @ git+https://github.com/CorpiXo/ppflx.git"           # core: Flower, TenSEAL, torch
+pip install "ppflx[tfhe] @ git+https://github.com/CorpiXo/ppflx.git"     # adds Concrete-ML — see the licence note below
 ```
 
 Python 3.12 (Concrete-ML requires < 3.13; Flower 1.36 requires > 3.11).
