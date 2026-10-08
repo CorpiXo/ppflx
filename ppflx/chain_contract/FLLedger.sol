@@ -79,6 +79,10 @@ contract FLLedger {
     /// @notice Ordered list of rounds that have proof anchors.
     uint256[] public anchoredRounds;
 
+    /// @notice Whether proofs have been anchored for a round. A round is
+    ///         anchored at most once, so a stored anchor cannot be replaced.
+    mapping(uint256 => bool) public anchored;
+
     // ── Constructor ───────────────────────────────────────────────────────────
 
     constructor() {
@@ -97,48 +101,57 @@ contract FLLedger {
     /**
      * @notice Commit the aggregated model hash for a training round.
      *
-     * @param round         FL round number (must not have been committed before).
-     * @param _modelHash    SHA-256 of the aggregated plaintext model parameters,
-     *                      encoded as a bytes32 value.
-     * @param _clientHashes SHA-256 hashes of individual client updates included
-     *                      in this round's aggregation.
+     * @param round        FL round number (must not have been committed before).
+     * @param _modelHash   SHA-256 of the aggregated plaintext model parameters,
+     *                     encoded as a bytes32 value; must be non-zero, since
+     *                     zero marks a round as uncommitted.
+     * @param clientHashes SHA-256 hashes of individual client updates included
+     *                     in this round's aggregation.
      */
     function commitModel(
         uint256 round,
         bytes32 _modelHash,
-        bytes32[] calldata _clientHashes
+        bytes32[] calldata clientHashes
     ) external onlyCoordinator {
+        require(_modelHash != bytes32(0), "FLLedger: zero model hash");
         require(
             modelHash[round] == bytes32(0),
             "FLLedger: round already committed"
         );
         modelHash[round] = _modelHash;
-        _clientHashes[round] = _clientHashes;
+        _clientHashes[round] = clientHashes;
         committedRounds.push(round);
-        emit ModelCommitted(round, _modelHash, _clientHashes.length, block.timestamp);
+        emit ModelCommitted(round, _modelHash, clientHashes.length, block.timestamp);
     }
 
     /**
      * @notice Anchor ZKP proof hashes for a training round.
      *
-     * @param round        FL round number.
-     * @param _proofHashes SHA-256 hashes of accepted gnark Groth16 proof payloads.
-     * @param _clientIds   SHA-256 hashes of the client identifiers corresponding
-     *                     to each accepted proof (same length as _proofHashes).
+     * @param round       FL round number; its model must already be committed,
+     *                    and it must not have been anchored before.
+     * @param proofHashes SHA-256 hashes of accepted gnark Groth16 proof payloads.
+     * @param clientIds   SHA-256 hashes of the client identifiers corresponding
+     *                    to each accepted proof (same length as proofHashes).
      */
     function anchorProofs(
         uint256 round,
-        bytes32[] calldata _proofHashes,
-        bytes32[] calldata _clientIds
+        bytes32[] calldata proofHashes,
+        bytes32[] calldata clientIds
     ) external onlyCoordinator {
         require(
-            _proofHashes.length == _clientIds.length,
+            modelHash[round] != bytes32(0),
+            "FLLedger: round has no model commit"
+        );
+        require(!anchored[round], "FLLedger: round already anchored");
+        require(
+            proofHashes.length == clientIds.length,
             "FLLedger: proof and clientId arrays must have equal length"
         );
-        _proofHashes[round] = _proofHashes;
-        _proofClientIds[round] = _clientIds;
+        anchored[round] = true;
+        _proofHashes[round] = proofHashes;
+        _proofClientIds[round] = clientIds;
         anchoredRounds.push(round);
-        emit ProofsAnchored(round, _proofHashes.length, block.timestamp);
+        emit ProofsAnchored(round, proofHashes.length, block.timestamp);
     }
 
     // ── Read functions ────────────────────────────────────────────────────────
