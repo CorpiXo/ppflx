@@ -361,11 +361,19 @@ class Web3Chain(ChainLedger):
 
     @staticmethod
     def _to_bytes32(hex_str: str) -> bytes:
-        """Convert a 0x-prefixed hex string to exactly 32 bytes (zero-padded)."""
-        raw = bytes.fromhex(hex_str.lstrip("0x"))
-        if len(raw) >= 32:
-            return raw[:32]
-        return raw.ljust(32, b"\x00")
+        """
+        Decode a 0x-prefixed SHA-256 hex digest to its 32 bytes.
+
+        Only the prefix is removed: leading zero digits belong to the digest.
+        Anything that is not exactly 32 bytes is refused rather than padded
+        or truncated, so the chain never records a different hash.
+        """
+        raw = bytes.fromhex(hex_str.removeprefix("0x"))
+        if len(raw) != 32:
+            raise ValueError(
+                f"[Chain] expected a 32-byte hex digest, got {len(raw)} bytes: {hex_str!r}"
+            )
+        return raw
 
     def _send_tx(self, fn) -> str:
         """Build, sign (if needed), send a contract function call; return tx hash."""
@@ -451,7 +459,7 @@ class Web3Chain(ChainLedger):
         # Encode client IDs as bytes32 hashes
         cid_b32 = [
             (
-                self._to_bytes32(sha256_hex(cid.encode()).lstrip("0x"))
+                self._to_bytes32(sha256_hex(cid.encode()))
                 if cid
                 else b"\x00" * 32
             )
