@@ -37,14 +37,21 @@ these properties.
 
 ## Install
 
-ppflx is not on PyPI yet; install it from GitHub:
-
 ```bash
-pip install "ppflx @ git+https://github.com/CorpiXo/ppflx.git"           # core: Flower, TenSEAL, torch
-pip install "ppflx[tfhe] @ git+https://github.com/CorpiXo/ppflx.git"     # adds Concrete-ML — see the licence note below
+pip install ppflx            # core: Flower, TenSEAL, torch
+pip install "ppflx[tfhe]"    # adds Concrete-ML — see the licence note below
 ```
 
 Python 3.12 (Concrete-ML requires < 3.13; Flower 1.36 requires > 3.11).
+
+**pip alone does not give working proofs.** The zero-knowledge modes (`zkp`,
+`zkp_sampled`, `he_elgamal_zkp`, `he_elgamal_zkp_sampled` and the `*_zkp*`
+composites) prove and verify through a separate Go proof service that pip does
+not install. Build it from
+[gnark-gradient-prover](https://github.com/CorpiXo/gnark-gradient-prover), set
+`FL_GNARK_BINARY` to the binary and make a local key set as in
+[docs/ZKP.md, section 7.1](https://github.com/CorpiXo/ppflx/blob/main/docs/ZKP.md#71-setup).
+Without it those modes cannot run; the other modes do not use the proof service.
 
 ## Use
 
