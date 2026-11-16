@@ -49,6 +49,11 @@ jobs:
       - name: Install
         # CPU-only torch keeps the CUDA wheels (several GB) off the runner; it is
         # the same torch==2.3.1 the package pins.
+        # concrete-ml 1.9.0 pins onnxoptimizer 0.3.13, which has no Python 3.12
+        # wheel, so pip builds it from source; its vendored CMakeLists need this
+        # to configure under CMake 4.
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[tfhe]" pytest
