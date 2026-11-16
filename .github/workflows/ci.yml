@@ -62,15 +62,22 @@ jobs:
       - name: Every test ran
         # With the proof service and Concrete-ML installed nothing may skip; a
         # skip here means a test silently stopped exercising what it claims to.
+        # JUnit records an xfail as <skipped type="pytest.xfail">; an xfail runs
+        # the test (the suite's are strict, so an unexpected pass fails), so it
+        # is listed, not counted as a skip.
         run: |
           python - "$RUNNER_TEMP/junit.xml" <<'PY'
           import sys
           import xml.etree.ElementTree as ET
-          skipped = [
-              f"{case.get('classname')}::{case.get('name')}: {case.find('skipped').get('message')}"
-              for case in ET.parse(sys.argv[1]).iter("testcase")
-              if case.find("skipped") is not None
-          ]
+          skipped, xfailed = [], []
+          for case in ET.parse(sys.argv[1]).iter("testcase"):
+              element = case.find("skipped")
+              if element is None:
+                  continue
+              entry = f"{case.get('classname')}::{case.get('name')}: {element.get('message')}"
+              (xfailed if element.get("type") == "pytest.xfail" else skipped).append(entry)
+          if xfailed:
+              print("Expected failures (ran, and failed as documented):", *xfailed, sep="\n  ")
           if skipped:
               print("Skipped with the proof service and Concrete-ML installed:", *skipped, sep="\n  ")
               sys.exit(1)
