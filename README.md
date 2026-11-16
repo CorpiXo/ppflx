@@ -42,7 +42,10 @@ pip install ppflx            # core: Flower, TenSEAL, torch
 pip install "ppflx[tfhe]"    # adds Concrete-ML — see the licence note below
 ```
 
-Python 3.12 (Concrete-ML requires < 3.13; Flower 1.36 requires > 3.11).
+Python 3.12 (Concrete-ML requires < 3.13; Flower 1.36 requires > 3.11). The
+`tfhe` extra builds `onnxoptimizer` (pinned by Concrete-ML, with no Python 3.12
+wheel) from source, which needs CMake and a C++ compiler; with CMake 4 or later,
+install with `CMAKE_POLICY_VERSION_MINIMUM=3.5 pip install "ppflx[tfhe]"`.
 
 **pip alone does not give working proofs.** The zero-knowledge modes (`zkp`,
 `zkp_sampled`, `he_elgamal_zkp`, `he_elgamal_zkp_sampled` and the `*_zkp*`
