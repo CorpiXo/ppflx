@@ -1,5 +1,7 @@
 # ppflx
 
+[![CI](https://github.com/CorpiXo/ppflx/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CorpiXo/ppflx/actions/workflows/ci.yml)
+
 Privacy-preserving federated learning on [Flower](https://flower.ai): each
 privacy mechanism is a plugin, so a run combines homomorphic encryption,
 zero-knowledge proofs of bounded model updates, and differential-privacy noise
