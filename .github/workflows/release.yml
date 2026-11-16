@@ -138,7 +138,10 @@ jobs:
           cmp "$dl/ppflx-$VERSION-py3-none-any.whl" "$RUNNER_TEMP/built/ppflx-$VERSION-py3-none-any.whl"
       - name: Clean venv, ppflx[tfhe] from the TestPyPI wheel, dependencies from PyPI
         # Dependencies come from PyPI, never TestPyPI, where anyone can upload
-        # any name.
+        # any name. onnxoptimizer (via concrete-ml) has no Python 3.12 wheel and
+        # needs CMAKE_POLICY_VERSION_MINIMUM to build from source under CMake 4.
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --no-cache-dir \
@@ -203,6 +206,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: pip install ppflx[tfhe] in a clean venv, as a user would
+        # As the README says for Python 3.12 with CMake 4: onnxoptimizer (via
+        # concrete-ml) builds from source and needs this to configure.
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           for attempt in $(seq 1 20); do
