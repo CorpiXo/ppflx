@@ -1,0 +1,286 @@
+name: Release
+
+# Pushing a tag vX.Y.Z publishes ppflx X.Y.Z: build and check the sdist and
+# wheel, upload to TestPyPI, install from there and prove/verify against a
+# built proof service, then the same on PyPI, then create the GitHub Release.
+# Uploads use PyPI Trusted Publishing (OIDC); no API token is stored anywhere.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GNARK_REPOSITORY: CorpiXo/gnark-gradient-prover
+  GNARK_REF: v0.9.0
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Tag, pyproject.toml and CITATION.cff agree
+        id: version
+        run: |
+          python - <<'PY'
+          import os, re, sys, tomllib
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          cff = open("CITATION.cff").read()
+          cff_version = re.search(r"^version:\s*(\S+)\s*$", cff, re.M)
+          errors = []
+          if tag != f"v{version}":
+              errors.append(f"tag {tag} does not match pyproject.toml version {version}")
+          if not cff_version or cff_version.group(1).strip("\"'") != version:
+              errors.append(f"CITATION.cff version {cff_version and cff_version.group(1)} is not {version}")
+          if errors:
+              sys.exit("\n".join(errors))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"version={version}\n")
+          print(f"releasing ppflx {version}")
+          PY
+      - name: Build sdist and wheel
+        run: |
+          pip install build twine
+          python -m build
+          twine check --strict dist/*
+      - name: The pinned verifying keys ship in both distributions
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os, sys, tarfile, zipfile
+          from pathlib import Path
+          version = os.environ["VERSION"]
+          dist = sorted(p.name for p in Path("dist").iterdir())
+          wheel, sdist = f"ppflx-{version}-py3-none-any.whl", f"ppflx-{version}.tar.gz"
+          if dist != sorted([wheel, sdist]):
+              sys.exit(f"unexpected distributions: {dist}")
+          pinned = {p.name: p.read_bytes() for p in Path("ppflx/core/gnark_keys_data").iterdir()
+                    if p.name == "manifest.json" or p.suffix == ".vk"}
+          with zipfile.ZipFile(f"dist/{wheel}") as zf:
+              in_wheel = {n: zf.read(f"ppflx/core/gnark_keys_data/{n}") for n in pinned
+                          if f"ppflx/core/gnark_keys_data/{n}" in zf.namelist()}
+          with tarfile.open(f"dist/{sdist}") as tf:
+              prefix = f"ppflx-{version}/ppflx/core/gnark_keys_data/"
+              in_sdist = {n: tf.extractfile(prefix + n).read() for n in pinned
+                          if prefix + n in tf.getnames()}
+          for label, found in (("wheel", in_wheel), ("sdist", in_sdist)):
+              if found != pinned:
+                  sys.exit(f"{label}: pinned keys missing or different: expected {sorted(pinned)}, got {sorted(found)}")
+          print(f"wheel and sdist carry {sorted(pinned)} byte-for-byte")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://test.pypi.org/project/ppflx/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  verify-testpypi:
+    needs: [build, publish-testpypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dist
+          path: ${{ runner.temp }}/built
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Download from TestPyPI; it must be the wheel this run built
+        run: |
+          dl="$RUNNER_TEMP/from-testpypi"
+          for attempt in $(seq 1 20); do
+            if pip download --no-deps --no-cache-dir --index-url https://test.pypi.org/simple/ \
+                 "ppflx==$VERSION" -d "$dl"; then break; fi
+            [ "$attempt" = 20 ] && { echo "ppflx $VERSION never appeared on TestPyPI"; exit 1; }
+            sleep 30
+          done
+          cmp "$dl/ppflx-$VERSION-py3-none-any.whl" "$RUNNER_TEMP/built/ppflx-$VERSION-py3-none-any.whl"
+      - name: Clean venv, ppflx[tfhe] from the TestPyPI wheel, dependencies from PyPI
+        # Dependencies come from PyPI, never TestPyPI, where anyone can upload
+        # any name. onnxoptimizer (via concrete-ml) has no Python 3.12 wheel and
+        # needs CMAKE_POLICY_VERSION_MINIMUM to build from source under CMake 4.
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --no-cache-dir \
+            "ppflx[tfhe] @ file://$RUNNER_TEMP/from-testpypi/ppflx-$VERSION-py3-none-any.whl"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -I -c "import ppflx, concrete.fhe; print(ppflx.__file__)"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.GNARK_REPOSITORY }}
+          ref: ${{ env.GNARK_REF }}
+          path: gnark-gradient-prover
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: gnark-gradient-prover/go.mod
+          cache-dependency-path: gnark-gradient-prover/go.sum
+      - name: Build the proof service; local key setup (docs/ZKP.md 7.1)
+        run: |
+          (cd gnark-gradient-prover && go build -o gnark_service .)
+          export FL_GNARK_BINARY=$PWD/gnark-gradient-prover/gnark_service
+          "$FL_GNARK_BINARY" setup --keys-dir ~/.cache/ppflx/keys --pk-dir ~/.cache/ppflx/pk
+          {
+            echo "FL_GNARK_BINARY=$FL_GNARK_BINARY"
+            echo "FL_ZKP_KEYS_DIR=$HOME/.cache/ppflx/keys"
+            echo "FL_ZKP_PK_DIR=$HOME/.cache/ppflx/pk"
+          } >> "$GITHUB_ENV"
+      - name: ZKP smoke test against the installed package
+        working-directory: ${{ runner.temp }}
+        run: '"$RUNNER_TEMP/venv/bin/python" -I "$GITHUB_WORKSPACE/scripts/zkp_smoke.py"'
+
+  publish-pypi:
+    needs: [build, verify-testpypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ppflx/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  verify-pypi:
+    needs: [build, publish-pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dist
+          path: ${{ runner.temp }}/built
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: pip install ppflx[tfhe] in a clean venv, as a user would
+        # As the README says for Python 3.12 with CMake 4: onnxoptimizer (via
+        # concrete-ml) builds from source and needs this to configure.
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          for attempt in $(seq 1 20); do
+            if "$RUNNER_TEMP/venv/bin/pip" install --no-cache-dir "ppflx[tfhe]==$VERSION"; then break; fi
+            [ "$attempt" = 20 ] && { echo "ppflx $VERSION never became installable from PyPI"; exit 1; }
+            sleep 30
+          done
+          "$RUNNER_TEMP/venv/bin/pip" download --no-deps --no-cache-dir "ppflx==$VERSION" -d "$RUNNER_TEMP/from-pypi"
+          cmp "$RUNNER_TEMP/from-pypi/ppflx-$VERSION-py3-none-any.whl" "$RUNNER_TEMP/built/ppflx-$VERSION-py3-none-any.whl"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -I -c "import ppflx, concrete.fhe; print(ppflx.__file__)"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.GNARK_REPOSITORY }}
+          ref: ${{ env.GNARK_REF }}
+          path: gnark-gradient-prover
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: gnark-gradient-prover/go.mod
+          cache-dependency-path: gnark-gradient-prover/go.sum
+      - name: Build the proof service; local key setup (docs/ZKP.md 7.1)
+        run: |
+          (cd gnark-gradient-prover && go build -o gnark_service .)
+          export FL_GNARK_BINARY=$PWD/gnark-gradient-prover/gnark_service
+          "$FL_GNARK_BINARY" setup --keys-dir ~/.cache/ppflx/keys --pk-dir ~/.cache/ppflx/pk
+          {
+            echo "FL_GNARK_BINARY=$FL_GNARK_BINARY"
+            echo "FL_ZKP_KEYS_DIR=$HOME/.cache/ppflx/keys"
+            echo "FL_ZKP_PK_DIR=$HOME/.cache/ppflx/pk"
+          } >> "$GITHUB_ENV"
+      - name: ZKP smoke test against the installed package
+        working-directory: ${{ runner.temp }}
+        run: '"$RUNNER_TEMP/venv/bin/python" -I "$GITHUB_WORKSPACE/scripts/zkp_smoke.py"'
+
+  github-release:
+    needs: [build, verify-pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub Release
+        run: |
+          previous=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          {
+            echo "ppflx $VERSION on PyPI: https://pypi.org/project/ppflx/$VERSION/"
+            echo
+            echo '```bash'
+            echo "pip install ppflx==$VERSION"
+            echo '```'
+            echo
+            echo "The zero-knowledge modes also need the proof service built from"
+            echo "[gnark-gradient-prover](https://github.com/$GNARK_REPOSITORY) (\`FL_GNARK_BINARY\`)."
+            echo
+            echo "## Changes${previous:+ since $previous}"
+            echo
+            git log --no-merges --format='- %s (%h)' ${previous:+"$previous.."}"$TAG"
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
