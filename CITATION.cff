@@ -9,7 +9,7 @@ authors:
   - name: "CorpiXo"
 license: Apache-2.0
 version: 0.9.1
-date-released: "2026-11-16"
+date-released: "2026-11-17"
 repository-code: "https://github.com/CorpiXo/ppflx"
 abstract: >-
   A privacy-preserving federated learning library on Flower. Each privacy
