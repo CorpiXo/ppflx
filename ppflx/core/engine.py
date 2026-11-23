@@ -142,7 +142,8 @@ def train_step(
         # 4. Loss backward
         loss.backward()
 
-        # 4.5 DP-SGD (clip gradients + add noise to gradients)
+        # 4.5 DP noise: clip the batch's mean gradient and add noise. Not per-example
+        # DP-SGD and no privacy accounting (see ppflx/privacy/dp.py).
         if dp_params is not None:
             dp_start = time.perf_counter()
 

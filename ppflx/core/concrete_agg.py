@@ -153,7 +153,10 @@ class ConcreteAggregationContext:
         enable_fhe: bool = True,
         fixed_quant_range: Optional[Tuple[float, float]] = (-5.0, 5.0),
         num_clients: int = 2,
+        role: str = "client",
     ):
+        if role not in ("client", "server"):
+            raise ValueError(f"role must be 'client' or 'server', got {role!r}")
         if not CONCRETE_AVAILABLE:
             raise ImportError(
                 "Concrete TFHE library required. "
@@ -173,6 +176,10 @@ class ConcreteAggregationContext:
         # num_clients before encryption so the homomorphic SUM equals the
         # AVERAGE directly, preventing ring overflow.
         self.num_clients = max(1, int(num_clients))
+        # The server role aggregates ciphertexts with the compiled circuit and the
+        # evaluation keys only. It never loads a Concrete client, which holds the
+        # secret key, so it cannot encrypt, decrypt or compile.
+        self.role = role
 
         # Use per-tensor quantization (better accuracy) instead of fixed range
         # Store quant_min/max in EncryptedTensor metadata for decryption
@@ -341,9 +348,47 @@ class ConcreteAggregationContext:
                 return eval_keys.serialize()
         raise RuntimeError("Concrete client does not expose serialized evaluation keys")
 
+    def _get_server(self, shape: Tuple[int, ...]) -> fhe.Server:
+        """The compiled addition circuit for ``shape``, for homomorphic addition."""
+        if self.role != "server":
+            return self._get_client_server(shape)[1]
+        if shape in self._servers:
+            return self._servers[shape]
+        _, server_base, _ = self._artifact_paths(shape)
+        server_path = self._zip_path(server_base)
+        if not os.path.exists(server_path):
+            # Compiling would generate a secret key on the server; clients compile.
+            raise RuntimeError(
+                f"[TFHE] No compiled circuit for shape {shape} in {self._keys_dir}; "
+                "the server never compiles, clients do."
+            )
+        if len(self._servers) >= self._max_cached_shapes:
+            self._servers.clear()
+            self._evaluation_keys.clear()
+            gc.collect()
+        server = fhe.Server.load(server_path)
+        self._servers[shape] = server
+        return server
+
+    def _load_server_evaluation_keys(self, shape: Tuple[int, ...]) -> EvaluationKeys:
+        """Evaluation keys from the file clients wrote; the server never derives them."""
+        eval_keys_path = self._eval_keys_path_for(shape)
+        _, server_base, _ = self._artifact_paths(shape)
+        server_path = self._zip_path(server_base)
+        if not os.path.exists(eval_keys_path):
+            raise RuntimeError(f"[TFHE] No evaluation keys for shape {shape} in {self._keys_dir}")
+        if os.path.exists(server_path) and os.path.getmtime(eval_keys_path) < os.path.getmtime(server_path):
+            raise RuntimeError(f"[TFHE] Evaluation keys for shape {shape} are older than its circuit")
+        with open(eval_keys_path, "rb") as f:
+            eval_keys = EvaluationKeys.deserialize(f.read())
+        self._evaluation_keys[shape] = eval_keys
+        return eval_keys
+
     def _get_evaluation_keys(self, shape: Tuple[int, ...]) -> EvaluationKeys:
         if shape in self._evaluation_keys:
             return self._evaluation_keys[shape]
+        if self.role == "server":
+            return self._load_server_evaluation_keys(shape)
 
         client, _ = self._get_client_server(shape)
         eval_keys_path = self._eval_keys_path_for(shape)
@@ -383,6 +428,8 @@ class ConcreteAggregationContext:
     def _get_client_server(
         self, shape: Tuple[int, ...]
     ) -> Tuple[fhe.Client, fhe.Server]:
+        if self.role == "server":
+            raise RuntimeError("[TFHE] the server role never loads a Concrete client (it holds the secret key)")
         self._check_rss_guard(f"_get_client_server:start:{shape}")
 
         if shape in self._clients and shape in self._servers:
@@ -804,9 +851,12 @@ class ConcreteAggregationContext:
                 bit_width=self.bit_width,
                 is_simulated=False,
                 key_id=id(private_key),
-                # scale=1: server sum of pre-averaged values = average directly.
-                # No post-hoc division needed in decrypt_tensor.
-                scale=1.0,
+                # scale is this ciphertext's share of the average: its values
+                # were divided by num_clients. Homomorphic addition sums the
+                # shares, and decrypt_tensor divides by the total, so the
+                # average of all num_clients uploads comes back unchanged, and
+                # so does a single upload (the round-1 model a client sends).
+                scale=1.0 / self.num_clients,
                 quant_min=t_min,
                 quant_max=t_max,
             )
@@ -854,8 +904,11 @@ class ConcreteAggregationContext:
             value = self._deserialize_value(encrypted.ciphertext)
             decrypted_int = client.decrypt(value)
 
-            # Get the scale (number of clients that were summed)
-            scale = encrypted.scale if encrypted.scale else 1.0
+            # The summed shares of the contributions (1/num_clients each).
+            scale = float(encrypted.scale)
+            if not 0.0 < scale <= 1.0 + 1e-9:
+                # More than num_clients contributions can wrap the ring.
+                raise ValueError(f"[TFHE] ciphertext holds shares totalling {scale}; expected (0, 1]")
 
             print(
                 f"[DECRYPT] Before averaging: scale={scale}, "
@@ -1263,33 +1316,11 @@ class ConcreteAggregator:
                 quant_max=avg_max,
             )
 
-        _, server = self.context._get_client_server(enc1.shape)
+        server = self.context._get_server(enc1.shape)
         eval_keys = self.context._get_evaluation_keys(enc1.shape)
         v1 = self.context._deserialize_value(enc1.ciphertext)
         v2 = self.context._deserialize_value(enc2.ciphertext)
-
-        # Debug: Try to decrypt v1 and v2 before addition to understand their values
-        try:
-            client, _ = self.context._get_client_server(enc1.shape)
-            dec1 = client.decrypt(v1)
-            dec2 = client.decrypt(v2)
-            print(
-                f"[ADD_DEBUG] Before server.run: dec1 range=[{dec1.min()}, {dec1.max()}], dec2 range=[{dec2.min()}, {dec2.max()}]"
-            )
-        except:
-            pass
-
         summed = server.run(v1, v2, evaluation_keys=eval_keys)
-
-        # Debug: Decrypt the sum to see what we got
-        try:
-            dec_sum = client.decrypt(summed)
-            print(
-                f"[ADD_DEBUG] After server.run: dec_sum range=[{dec_sum.min()}, {dec_sum.max()}]"
-            )
-        except:
-            pass
-
         serialized = self.context._serialize_value(summed)
 
         return EncryptedTensor(
@@ -1297,7 +1328,7 @@ class ConcreteAggregator:
             shape=enc1.shape,
             bit_width=enc1.bit_width,
             is_simulated=False,
-            scale=enc1.scale,
+            scale=enc1.scale + enc2.scale,
             quant_min=avg_min,
             quant_max=avg_max,
         )
@@ -1324,12 +1355,10 @@ class ConcreteAggregator:
         for enc in self.accumulated:
             # For simulated mode: scale records how many clients contributed so
             # decrypt_tensor can divide to get the average.
-            # For real FHE mode: pre-averaging is applied at encrypt_tensor, so
-            # the homomorphic sum IS already the average → scale must be 1.
+            # For real FHE mode: scale already holds the summed shares
+            # (1/num_clients per upload), which decrypt_tensor divides by.
             if enc.is_simulated:
                 enc.scale = self.weight_sum if self.weight_sum > 0 else 1.0
-            else:
-                enc.scale = 1.0  # sum already equals average (pre-averaged)
 
         return self.accumulated
 

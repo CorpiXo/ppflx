@@ -1,8 +1,11 @@
 """
-Differential Privacy (DP-SGD) mode.
+Differential-privacy noise mode.
 
-DP noise is applied during the local training gradient step in engine.train()
-(clipping + Gaussian/Laplace noise on each gradient batch).
+Noise is applied during local training in engine.train(): each batch's mean
+gradient is clipped to max_grad_norm and Gaussian (or Laplace) noise is added.
+This is not per-example DP-SGD and nothing accounts for privacy across steps or
+rounds, so epsilon sets the noise; it is not an end-to-end (epsilon, delta)
+guarantee (SECURITY.md).
 Parameters are transported as plain numpy arrays — no additional encryption.
 Aggregation uses standard FedAvg.
 
@@ -21,7 +24,7 @@ from ppflx.privacy.registry import register_mode
 
 @register_mode("dp")
 class DifferentialPrivacyMode(PrivacyMode):
-    """Federated learning with differentially private gradient updates (DP-SGD)."""
+    """Federated learning with clipped, noised gradient steps (see the module docstring)."""
 
     @property
     def name(self) -> str:

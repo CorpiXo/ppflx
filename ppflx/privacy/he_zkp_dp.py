@@ -3,8 +3,8 @@ Triple combination: HE + ZKP + DP privacy mode.
 
 Registered modes
 ----------------
-he_tenseal_zkp_dp       — TenSEAL CKKS + gnark ZKP + DP-SGD
-he_concrete_tfhe_zkp_dp — Concrete TFHE + gnark ZKP + DP-SGD
+he_tenseal_zkp_dp       — TenSEAL CKKS + gnark ZKP + DP noise
+he_concrete_tfhe_zkp_dp — Concrete TFHE + gnark ZKP + DP noise
 
 Security architecture
 ---------------------
@@ -13,11 +13,11 @@ Security architecture
   ├────────────────┼──────────────────────────────────────────────────────────┤
   │ Confidentiality│ FHE — server never sees plaintext weights                │
   │ Integrity      │ none — the proof is not bound to the ciphertext          │
-  │ Privacy        │ DP-SGD — gradient clipping + Gaussian noise (ε-DP)       │
+  │ DP             │ batch-gradient clipping + Gaussian noise; no guarantee   │
   └────────────────┴──────────────────────────────────────────────────────────┘
 
 Client-side flow per round:
-  1. Local training with DP-SGD (per-step gradient clipping + noise).
+  1. Local training with DP noise (batch-gradient clipping + noise, ppflx.privacy.dp).
   2. Prove the DP-noised update with the norm circuit. These modes enforce no
      update-norm bound: the proofs aren't bound to the aggregated ciphertext,
      and DP noise makes honest updates far larger than a non-DP calibration.
@@ -88,7 +88,7 @@ class _HeZKPDPCompositeMode(_HeZKPCompositeMode):
 
 @register_mode("he_tenseal_zkp_dp")
 class HETenSEALZKPDPMode(_HeZKPDPCompositeMode):
-    """TenSEAL CKKS + gnark ZKP + DP-SGD."""
+    """TenSEAL CKKS + gnark ZKP + DP noise."""
 
     def __init__(self):
         self._he_mode = HeTensealMode()
@@ -101,7 +101,7 @@ class HETenSEALZKPDPMode(_HeZKPDPCompositeMode):
 
 @register_mode("he_concrete_tfhe_zkp_dp")
 class HEConcreteTFHEZKPDPMode(_HeZKPDPCompositeMode):
-    """Concrete TFHE + gnark ZKP + DP-SGD."""
+    """Concrete TFHE + gnark ZKP + DP noise."""
 
     def __init__(self):
         self._he_mode = HeConcreteThfeMode()

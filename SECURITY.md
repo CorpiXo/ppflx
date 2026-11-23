@@ -22,8 +22,6 @@ reports that a claimed property fails are.
 - `he_elgamal_zkp` and `he_elgamal_zkp_sampled`: the proof is bound to the
   ciphertext the server aggregates.
 - HE modes: the server sees only ciphertexts of client updates.
-- `dp`: an (epsilon, delta) differential-privacy guarantee for the published
-  model, under the recorded parameters.
 
 **Not claimed:**
 
@@ -37,5 +35,10 @@ reports that a claimed property fails are.
 - An update within the norm bound can still be malicious: the bound limits a
   client's per-round influence, not the direction of its update.
 - `zkp_sampled` is a benchmark configuration over plaintext updates.
+- The DP modes (`dp` and the `_dp` composites) add noise during training but give
+  no end-to-end (epsilon, delta) guarantee: they clip each batch's mean gradient
+  rather than each example's, calibrate the noise for a single Gaussian-mechanism
+  step, and do no privacy accounting across steps or rounds. The recorded
+  epsilon is a noise setting.
 
 See `docs/ZKP.md` for the protocols and their limitations in full.

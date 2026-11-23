@@ -1252,6 +1252,7 @@ def get_concrete_aggregation_context(
     enable_fhe: bool = True,
     adaptive_quant: bool = True,
     num_clients: int = 2,
+    role: str = "client",
 ) -> Any:
     """
     Get Concrete TFHE context for parameter aggregation.
@@ -1267,6 +1268,8 @@ def get_concrete_aggregation_context(
         num_clients: Number of FL clients. Used for pre-averaging: each client
                      divides quantized values by num_clients before encryption so
                      the homomorphic sum never overflows the TFHE ring.
+        role: "client" (encrypts and decrypts) or "server" (aggregates only,
+              never loads the secret key).
 
     Returns:
         ConcreteAggregationContext instance
@@ -1283,6 +1286,7 @@ def get_concrete_aggregation_context(
             enable_fhe=enable_fhe,
             fixed_quant_range=fixed_quant_range,
             num_clients=num_clients,
+            role=role,
         )
     except ImportError:
         raise ImportError(
