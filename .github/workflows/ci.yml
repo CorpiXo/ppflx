@@ -41,6 +41,7 @@ jobs:
         run: |
           go build -o gnark_service .
           echo "FL_GNARK_BINARY=$PWD/gnark_service" >> "$GITHUB_ENV"
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
@@ -56,7 +57,9 @@ jobs:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[tfhe]" pytest
+          pip install -e ".[tfhe,web3]" pytest solc-select
+          solc-select install 0.8.28
+          solc-select use 0.8.28
       - name: pytest
         run: pytest tests -ra --junitxml="$RUNNER_TEMP/junit.xml"
       - name: Every test ran
