@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 from abc import ABC, abstractmethod
@@ -359,31 +360,57 @@ class Web3Chain(ChainLedger):
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
+    _GAS_ESTIMATE_MARGIN: float = 1.2
+
     @staticmethod
     def _to_bytes32(hex_str: str) -> bytes:
-        """Convert a 0x-prefixed hex string to exactly 32 bytes (zero-padded)."""
-        raw = bytes.fromhex(hex_str.lstrip("0x"))
-        if len(raw) >= 32:
-            return raw[:32]
-        return raw.ljust(32, b"\x00")
+        """Convert a 32-byte hex string (with optional 0x prefix) to bytes."""
+        if not isinstance(hex_str, str):
+            raise TypeError(
+                f"Expected hex string for bytes32, got {type(hex_str).__name__}"
+            )
+        body = hex_str.removeprefix("0x")
+        if len(body) != 64:
+            raise ValueError(
+                f"Expected 32-byte (64-hex-char) digest, got {len(body)} chars"
+            )
+        try:
+            raw = bytes.fromhex(body)
+        except ValueError as exc:
+            raise ValueError(f"Invalid hex string for bytes32: {hex_str!r}") from exc
+        if len(raw) != 32:
+            raise ValueError(f"Expected 32 bytes, got {len(raw)}")
+        return raw
 
     def _send_tx(self, fn) -> str:
         """Build, sign (if needed), send a contract function call; return tx hash."""
+        try:
+            estimated_gas = fn.estimate_gas({"from": self._account})
+        except Exception as exc:
+            raise RuntimeError(f"[Chain] Gas estimation failed: {exc}") from exc
+        gas_limit = math.ceil(estimated_gas * self._GAS_ESTIMATE_MARGIN)
+
         if self._use_signer:
             tx_params = {
                 "from": self._account,
                 "nonce": self._w3.eth.get_transaction_count(self._account),
-                "gas": 500_000,
+                "gas": gas_limit,
                 "gasPrice": self._w3.eth.gas_price,
             }
             unsigned = fn.build_transaction(tx_params)
             signed = self._w3.eth.account.sign_transaction(unsigned, self._signer.key)
-            tx_hash = self._w3.eth.send_raw_transaction(signed.rawTransaction)
+            raw_tx = getattr(signed, "raw_transaction", None)
+            if raw_tx is None:
+                raw_tx = signed.rawTransaction
+            tx_hash = self._w3.eth.send_raw_transaction(raw_tx)
         else:
-            tx_hash = fn.transact({"from": self._account, "gas": 500_000})
+            tx_hash = fn.transact({"from": self._account, "gas": gas_limit})
 
         receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-        return "0x" + receipt["transactionHash"].hex()
+        tx_hex = "0x" + receipt["transactionHash"].hex().removeprefix("0x")
+        if receipt.get("status") == 0:
+            raise RuntimeError(f"[Chain] Transaction reverted: {tx_hex}")
+        return tx_hex
 
     def _send_calldata(self, fingerprint: bytes) -> str:
         """Send a zero-value self-transfer with *fingerprint* as calldata."""
@@ -397,7 +424,7 @@ class Web3Chain(ChainLedger):
             }
         )
         receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-        return "0x" + receipt["transactionHash"].hex()
+        return "0x" + receipt["transactionHash"].hex().removeprefix("0x")
 
     # ── Public interface ───────────────────────────────────────────────────────
 
@@ -451,7 +478,7 @@ class Web3Chain(ChainLedger):
         # Encode client IDs as bytes32 hashes
         cid_b32 = [
             (
-                self._to_bytes32(sha256_hex(cid.encode()).lstrip("0x"))
+                self._to_bytes32(sha256_hex(cid.encode()))
                 if cid
                 else b"\x00" * 32
             )

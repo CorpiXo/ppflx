@@ -73,6 +73,9 @@ contract FLLedger {
     /// @notice Client IDs (as bytes32 hashes) corresponding to each proof.
     mapping(uint256 => bytes32[]) private _proofClientIds;
 
+    /// @notice Tracks whether proof hashes have already been anchored for a round.
+    mapping(uint256 => bool) private _proofsAnchored;
+
     /// @notice Ordered list of rounds that have a model commit.
     uint256[] public committedRounds;
 
@@ -98,47 +101,52 @@ contract FLLedger {
      * @notice Commit the aggregated model hash for a training round.
      *
      * @param round         FL round number (must not have been committed before).
-     * @param _modelHash    SHA-256 of the aggregated plaintext model parameters,
+     * @param modelHash_    SHA-256 of the aggregated plaintext model parameters,
      *                      encoded as a bytes32 value.
-     * @param _clientHashes SHA-256 hashes of individual client updates included
+     * @param clientHashes_ SHA-256 hashes of individual client updates included
      *                      in this round's aggregation.
      */
     function commitModel(
         uint256 round,
-        bytes32 _modelHash,
-        bytes32[] calldata _clientHashes
+        bytes32 modelHash_,
+        bytes32[] calldata clientHashes_
     ) external onlyCoordinator {
         require(
             modelHash[round] == bytes32(0),
             "FLLedger: round already committed"
         );
-        modelHash[round] = _modelHash;
-        _clientHashes[round] = _clientHashes;
+        modelHash[round] = modelHash_;
+        _clientHashes[round] = clientHashes_;
         committedRounds.push(round);
-        emit ModelCommitted(round, _modelHash, _clientHashes.length, block.timestamp);
+        emit ModelCommitted(round, modelHash_, clientHashes_.length, block.timestamp);
     }
 
     /**
      * @notice Anchor ZKP proof hashes for a training round.
      *
-     * @param round        FL round number.
-     * @param _proofHashes SHA-256 hashes of accepted gnark Groth16 proof payloads.
-     * @param _clientIds   SHA-256 hashes of the client identifiers corresponding
-     *                     to each accepted proof (same length as _proofHashes).
+     * @param round        FL round number (must not have been anchored before).
+     * @param proofHashes_ SHA-256 hashes of accepted gnark Groth16 proof payloads.
+     * @param clientIds_   SHA-256 hashes of the client identifiers corresponding
+     *                     to each accepted proof (same length as proofHashes_).
      */
     function anchorProofs(
         uint256 round,
-        bytes32[] calldata _proofHashes,
-        bytes32[] calldata _clientIds
+        bytes32[] calldata proofHashes_,
+        bytes32[] calldata clientIds_
     ) external onlyCoordinator {
         require(
-            _proofHashes.length == _clientIds.length,
+            !_proofsAnchored[round],
+            "FLLedger: round proofs already anchored"
+        );
+        require(
+            proofHashes_.length == clientIds_.length,
             "FLLedger: proof and clientId arrays must have equal length"
         );
-        _proofHashes[round] = _proofHashes;
-        _proofClientIds[round] = _clientIds;
+        _proofsAnchored[round] = true;
+        _proofHashes[round] = proofHashes_;
+        _proofClientIds[round] = clientIds_;
         anchoredRounds.push(round);
-        emit ProofsAnchored(round, _proofHashes.length, block.timestamp);
+        emit ProofsAnchored(round, proofHashes_.length, block.timestamp);
     }
 
     // ── Read functions ────────────────────────────────────────────────────────
