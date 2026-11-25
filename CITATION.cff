@@ -5,11 +5,11 @@ type: software
 authors:
   - given-names: Mehdi
     family-names: Valinejad
+    affiliation: "CorpiXo"
     orcid: "https://orcid.org/0009-0006-9154-9606"
-  - name: "CorpiXo"
 license: Apache-2.0
-version: 0.9.1
-date-released: "2026-11-17"
+version: 0.9.2
+date-released: "2026-11-25"
 repository-code: "https://github.com/CorpiXo/ppflx"
 abstract: >-
   A privacy-preserving federated learning library on Flower. Each privacy
