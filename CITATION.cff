@@ -11,6 +11,10 @@ license: Apache-2.0
 version: 0.9.2
 date-released: "2026-11-25"
 repository-code: "https://github.com/CorpiXo/ppflx"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24536453
+    description: Concept DOI (all versions)
 abstract: >-
   A privacy-preserving federated learning library on Flower. Each privacy
   mechanism is a plugin: homomorphic encryption (CKKS, TFHE, exponential
